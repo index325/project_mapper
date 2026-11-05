@@ -1,0 +1,274 @@
+import type { Chunk } from "./chunk.js";
+import type { ScanResult, SkippedFile } from "./scan.js";
+import { MAP_PATH } from "./scan.js";
+
+export const SYNTHESIS_SECTIONS = [
+  "System Overview",
+  "Data Flow",
+  "Conventions",
+  "Gotchas",
+  "Navigation Guide",
+] as const;
+
+const START_MARKER = "<!-- project-mapper:start -->";
+const END_MARKER = "<!-- project-mapper:end -->";
+
+export interface Frontmatter {
+  lastMapped: string;
+  totalFiles: number;
+  totalTokens: number;
+  sourceCommit?: string;
+  fingerprint: string;
+}
+
+export function readFingerprint(map: string): string | undefined {
+  const match = /^---\n[\s\S]*?^fingerprint: ([0-9a-f]+)$[\s\S]*?^---$/m.exec(map);
+  return match?.[1];
+}
+
+function compact(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+}
+
+/** Applies a transform to every line outside code fences. */
+function mapOutsideFences(text: string, transform: (line: string) => string): string {
+  let fenced = false;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (/^\s*(```|~~~)/.test(line)) {
+        fenced = !fenced;
+        return line;
+      }
+      return fenced ? line : transform(line);
+    })
+    .join("\n");
+}
+
+/** Keeps a model's report from breaking the document outline. */
+export function demoteHeadings(text: string): string {
+  return mapOutsideFences(text, (line) => line.replace(/^#{1,3}(?=\s)/, "####"));
+}
+
+export function parseSections(text: string): Map<string, string> {
+  const sections = new Map<string, string>();
+  let current: string | undefined;
+  let lines: string[] = [];
+  let fenced = false;
+  const flush = () => {
+    if (current !== undefined) sections.set(current, lines.join("\n").trim());
+  };
+  for (const line of text.split("\n")) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    const heading = fenced ? null : /^##\s+(.+?)\s*$/.exec(line);
+    if (heading?.[1]) {
+      flush();
+      current = heading[1];
+      lines = [];
+    } else {
+      lines.push(line);
+    }
+  }
+  flush();
+  return sections;
+}
+
+export function extractSummary(text: string): { summary?: string; rest: string } {
+  const match = /<agents_summary>([\s\S]*?)<\/agents_summary>/i.exec(text);
+  if (!match) return { rest: text };
+  return { summary: match[1]?.trim(), rest: text.replace(match[0], "") };
+}
+
+interface DirectoryNode {
+  directFiles: number;
+  files: number;
+  tokens: number;
+  children: Map<string, DirectoryNode>;
+}
+
+/** Directories only, with chains such as com/acme/app on one line: Java trees are mostly chains. */
+export function directoryTree(scan: Pick<ScanResult, "files">): string {
+  const newNode = (): DirectoryNode => ({ directFiles: 0, files: 0, tokens: 0, children: new Map() });
+  const root = newNode();
+  for (const file of scan.files) {
+    const parts = file.path.split("/").slice(0, -1);
+    let node = root;
+    node.files += 1;
+    node.tokens += file.tokens;
+    for (const part of parts) {
+      let child = node.children.get(part);
+      if (!child) {
+        child = newNode();
+        node.children.set(part, child);
+      }
+      node = child;
+      node.files += 1;
+      node.tokens += file.tokens;
+    }
+    node.directFiles += 1;
+  }
+
+  const summary = (node: DirectoryNode) =>
+    `(${node.files} ${node.files === 1 ? "file" : "files"}, ~${compact(node.tokens)} tokens)`;
+  const lines = [`./ ${summary(root)}`];
+
+  function print(node: DirectoryNode, indent: number): void {
+    for (const [name, child] of [...node.children.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      let path = name;
+      let current = child;
+      while (current.directFiles === 0 && current.children.size === 1) {
+        const [nextName, next] = [...current.children.entries()][0] as [string, DirectoryNode];
+        path += `/${nextName}`;
+        current = next;
+      }
+      lines.push(`${"  ".repeat(indent)}${path}/ ${summary(current)}`);
+      print(current, indent + 1);
+    }
+  }
+  print(root, 1);
+
+  return `\`\`\`text\n${lines.join("\n")}\n\`\`\``;
+}
+
+function coverage(skipped: SkippedFile[], truncated: string[]): string {
+  const rows = [
+    ...skipped.map((file) => `| \`${file.path}\` | ${file.reason.replace("_", " ")} |`),
+    ...truncated.map((path) => `| \`${path}\` | analyzed only in part (larger than one request) |`),
+  ];
+  if (rows.length === 0) return "Every mapped file was analyzed in full.";
+  return `These files were left out of the analysis, in full or in part:\n\n| File | Reason |\n|------|--------|\n${rows.join("\n")}`;
+}
+
+export interface RenderInput {
+  frontmatter: Frontmatter;
+  scan: ScanResult;
+  chunks: Chunk[];
+  reports: string[];
+  sections: Map<string, string>;
+  truncated: string[];
+  /** Sections derived from the code graph, written without the model. */
+  graphMarkdown?: string;
+}
+
+export function renderMap(input: RenderInput): string {
+  const { frontmatter, scan, chunks, reports, sections, truncated, graphMarkdown } = input;
+  const section = (name: string) =>
+    sections.get(name) ?? "_Not generated: the model did not return this section._";
+
+  const modules = chunks
+    .map((chunk, index) => {
+      const report = demoteHeadings(reports[index] ?? "");
+      const missing = chunk.files
+        .map((file) => file.path)
+        .filter((path) => !report.includes(path.split("/").pop() ?? path));
+      const note = missing.length
+        ? `\n\n> Not described by the model: ${missing.map((path) => `\`${path}\``).join(", ")}`
+        : "";
+      return `### ${chunk.label}\n\n**Scope**: ${chunk.files.length} files, ~${compact(chunk.tokens)} tokens\n\n${report}${note}`;
+    })
+    .join("\n\n");
+
+  const header = [
+    "---",
+    `last_mapped: ${frontmatter.lastMapped}`,
+    `total_files: ${frontmatter.totalFiles}`,
+    `total_tokens_estimated: ${frontmatter.totalTokens}`,
+    ...(frontmatter.sourceCommit ? [`source_commit: ${frontmatter.sourceCommit}`] : []),
+    `fingerprint: ${frontmatter.fingerprint}`,
+    "generator: project-mapper",
+    "---",
+  ].join("\n");
+
+  return `${header}
+
+# Codebase Map
+
+> Auto-generated by project-mapper. Last mapped: ${frontmatter.lastMapped}
+
+## System Overview
+
+${section("System Overview")}
+
+## Directory Structure
+
+${directoryTree(scan)}
+
+${graphMarkdown ? `${graphMarkdown}\n\n` : ""}## Module Guide
+
+${modules}
+
+## Data Flow
+
+${section("Data Flow")}
+
+## Conventions
+
+${section("Conventions")}
+
+## Gotchas
+
+${section("Gotchas")}
+
+## Navigation Guide
+
+${section("Navigation Guide")}
+
+## Mapping Coverage
+
+${coverage(scan.skipped, truncated)}
+`;
+}
+
+export function renderInstructionsSection(summary: string, hasGraph = false): string {
+  const graphHint = hasGraph
+    ? "\n\nIf the project-mapper tools are available, use `graph_context` before changing unfamiliar code and `graph_impact` to see what a change may break."
+    : "";
+  return `${START_MARKER}
+## Codebase Overview
+
+${summary}
+
+For detailed architecture, see [${MAP_PATH}](${MAP_PATH}).${graphHint}
+${END_MARKER}`;
+}
+
+/**
+ * Replaces only this tool's section, leaving the rest of the file alone. A "## Codebase Overview"
+ * without markers, such as one left by Cartographer, is taken over rather than duplicated.
+ */
+export function mergeInstructions(existing: string | undefined, section: string): string {
+  if (!existing?.trim()) return `${section}\n`;
+
+  const start = existing.indexOf(START_MARKER);
+  const end = existing.indexOf(END_MARKER);
+  if (start !== -1 && end > start) {
+    return existing.slice(0, start) + section + existing.slice(end + END_MARKER.length);
+  }
+
+  const legacy = /^## Codebase Overview[ \t]*$/m.exec(existing);
+  if (legacy) {
+    const after = existing.slice(legacy.index + legacy[0].length);
+    const next = /^## /m.exec(after);
+    const tail = next ? after.slice(next.index) : "";
+    const separator = tail ? "\n\n" : "\n";
+    return existing.slice(0, legacy.index) + section + separator + tail;
+  }
+
+  return `${existing.trimEnd()}\n\n${section}\n`;
+}
+
+/** Finds file paths the model cited that do not exist: the most damaging error a map can have. */
+export function findUnknownPaths(text: string, known: Set<string>): string[] {
+  const knownList = [...known];
+  const unknown = new Set<string>();
+  for (const match of text.matchAll(/`([^`\s]+)`/g)) {
+    const raw = match[1] ?? "";
+    const path = raw.replace(/^\.\//, "").replace(/:\d+(-\d+)?$/, "");
+    if (!path.includes("/") || !/\.[A-Za-z0-9]{1,10}$/.test(path)) continue;
+    if (/^(\/|[a-z]+:\/\/|\.\.\/)/i.test(path)) continue;
+    if (known.has(path)) continue;
+    if (knownList.some((candidate) => candidate.endsWith(`/${path}`))) continue;
+    unknown.add(path);
+  }
+  return [...unknown];
+}

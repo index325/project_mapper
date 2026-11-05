@@ -1,0 +1,21 @@
+// Merge into the project's opencode.json, or into ~/.config/opencode/opencode.json to use it everywhere.
+// Do not write the API key here: this file gets committed. Export it as an environment variable.
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "project-mapper": {
+      "type": "local",
+      "command": ["node", "/ABSOLUTE/PATH/TO/project_mapper/dist/src/mcp.js"],
+      "enabled": true,
+      "environment": {
+        "PROJECT_MAPPER_BASE_URL": "http://QWEN_SERVER:PORT/v1",
+        "PROJECT_MAPPER_MODEL": "ID_RETURNED_BY_GET_/v1/models",
+        "PROJECT_MAPPER_API_KEY": "{env:QWEN_API_KEY}",
+        "PROJECT_MAPPER_CONTEXT_TOKENS": "32768",
+        "PROJECT_MAPPER_MAX_OUTPUT_TOKENS": "4096",
+        "PROJECT_MAPPER_CONCURRENCY": "2",
+        "PROJECT_MAPPER_LANGUAGE": "Brazilian Portuguese"
+      }
+    }
+  }
+}

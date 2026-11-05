@@ -1,0 +1,35 @@
+{
+  "name": "project-mapper",
+  "version": "0.1.0",
+  "description": "In-house codebase mapper: generates docs/CODEBASE_MAP.md with a self-hosted model, callable from opencode over MCP.",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "bin": {
+    "project-mapper": "dist/src/cli.js",
+    "project-mapper-mcp": "dist/src/mcp.js"
+  },
+  "files": [
+    "dist/src",
+    "opencode",
+    "vendor",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "tsc && node --test \"dist/test/**/*.test.js\""
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ignore": "^7.0.14",
+    "web-tree-sitter": "^0.27.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}
