@@ -79,57 +79,6 @@ export function extractSummary(text: string): { summary?: string; rest: string }
   return { summary: match[1]?.trim(), rest: text.replace(match[0], "") };
 }
 
-interface DirectoryNode {
-  directFiles: number;
-  files: number;
-  tokens: number;
-  children: Map<string, DirectoryNode>;
-}
-
-/** Directories only, with chains such as com/acme/app on one line: Java trees are mostly chains. */
-export function directoryTree(scan: Pick<ScanResult, "files">): string {
-  const newNode = (): DirectoryNode => ({ directFiles: 0, files: 0, tokens: 0, children: new Map() });
-  const root = newNode();
-  for (const file of scan.files) {
-    const parts = file.path.split("/").slice(0, -1);
-    let node = root;
-    node.files += 1;
-    node.tokens += file.tokens;
-    for (const part of parts) {
-      let child = node.children.get(part);
-      if (!child) {
-        child = newNode();
-        node.children.set(part, child);
-      }
-      node = child;
-      node.files += 1;
-      node.tokens += file.tokens;
-    }
-    node.directFiles += 1;
-  }
-
-  const summary = (node: DirectoryNode) =>
-    `(${node.files} ${node.files === 1 ? "file" : "files"}, ~${compact(node.tokens)} tokens)`;
-  const lines = [`./ ${summary(root)}`];
-
-  function print(node: DirectoryNode, indent: number): void {
-    for (const [name, child] of [...node.children.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      let path = name;
-      let current = child;
-      while (current.directFiles === 0 && current.children.size === 1) {
-        const [nextName, next] = [...current.children.entries()][0] as [string, DirectoryNode];
-        path += `/${nextName}`;
-        current = next;
-      }
-      lines.push(`${"  ".repeat(indent)}${path}/ ${summary(current)}`);
-      print(current, indent + 1);
-    }
-  }
-  print(root, 1);
-
-  return `\`\`\`text\n${lines.join("\n")}\n\`\`\``;
-}
-
 function coverage(skipped: SkippedFile[], truncated: string[]): string {
   const rows = [
     ...skipped.map((file) => `| \`${file.path}\` | ${file.reason.replace("_", " ")} |`),
@@ -146,12 +95,14 @@ export interface RenderInput {
   reports: string[];
   sections: Map<string, string>;
   truncated: string[];
+  /** The Directory Structure section's content. */
+  tree: string;
   /** Sections derived from the code graph, written without the model. */
   graphMarkdown?: string;
 }
 
 export function renderMap(input: RenderInput): string {
-  const { frontmatter, scan, chunks, reports, sections, truncated, graphMarkdown } = input;
+  const { frontmatter, scan, chunks, reports, sections, truncated, tree, graphMarkdown } = input;
   const section = (name: string) =>
     sections.get(name) ?? "_Not generated: the model did not return this section._";
 
@@ -191,7 +142,7 @@ ${section("System Overview")}
 
 ## Directory Structure
 
-${directoryTree(scan)}
+${tree}
 
 ${graphMarkdown ? `${graphMarkdown}\n\n` : ""}## Module Guide
 

@@ -4,7 +4,7 @@ import { planChunks } from "../src/chunk.js";
 import { inputBudget, loadConfig } from "../src/config.js";
 import { createChat, stripThinking } from "../src/llm.js";
 import { redact } from "../src/redact.js";
-import { demoteHeadings, directoryTree, findUnknownPaths, mergeInstructions, parseSections, readFingerprint } from "../src/render.js";
+import { demoteHeadings, findUnknownPaths, mergeInstructions, parseSections, readFingerprint } from "../src/render.js";
 import type { ScannedFile } from "../src/scan.js";
 
 const file = (path: string, tokens: number): ScannedFile => ({ path, tokens, bytes: tokens * 3, hash: path });
@@ -71,16 +71,6 @@ test("planChunks names merged services instead of labeling them as the root", ()
   assert.deepEqual(
     chunks.map((chunk) => chunk.label),
     ["authuser", "course", "gateway, registry"],
-  );
-});
-
-test("directoryTree collapses package chains", () => {
-  const tree = directoryTree({
-    files: [file("svc/src/main/java/com/acme/App.java", 10), file("svc/pom.xml", 5), file("README.md", 1)],
-  });
-  assert.equal(
-    tree,
-    "```text\n./ (3 files, ~16 tokens)\n  svc/ (2 files, ~15 tokens)\n    src/main/java/com/acme/ (1 file, ~10 tokens)\n```",
   );
 });
 

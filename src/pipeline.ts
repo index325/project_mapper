@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { planChunks, type Chunk } from "./chunk.js";
 import { estimateTokens, inputBudget, type Config } from "./config.js";
@@ -12,6 +12,7 @@ import {
   analysisSystem,
   analysisUser,
   condenseSystem,
+  directorySystem,
   PROMPT_VERSION,
   reportsUser,
   synthesisSystem,
@@ -28,6 +29,7 @@ import {
   SYNTHESIS_SECTIONS,
 } from "./render.js";
 import { MAP_PATH, scanCodebase, WORK_DIR, type ScanResult } from "./scan.js";
+import { buildTree, directoryBatches, parseDirectoryPurposes, parseFilePurposes, renderTree } from "./tree.js";
 
 const exec = promisify(execFile);
 const MAX_CONDENSE_ROUNDS = 4;
@@ -233,6 +235,25 @@ export async function mapCodebase(
     );
   }
 
+  // The tree says what each item is for. Files come from the reports, directories from their files.
+  progress("describing the directory tree");
+  const tree = buildTree(scan.files);
+  const purposes = new Map<string, string>();
+  chunks.forEach((chunk, index) => {
+    for (const [path, purpose] of parseFilePurposes(reports[index] ?? "", chunk.files)) purposes.set(path, purpose);
+  });
+  const filePurposes = new Map(purposes);
+  await runPool(directoryBatches(tree, filePurposes, budget), config.concurrency, async (batch) => {
+    const answer = await ask(directorySystem(config.language), batch.user, [batch.user]);
+    for (const [key, purpose] of parseDirectoryPurposes(answer, batch.directories)) purposes.set(key, purpose);
+  });
+  const renderedTree = renderTree(tree, basename(resolve(root)), purposes);
+  if (renderedTree.itemsWithoutPurpose > 0) {
+    warnings.push(
+      `The model gave no purpose for ${renderedTree.itemsWithoutPurpose} of ${renderedTree.items} items in the directory tree.`,
+    );
+  }
+
   // A problem with the graph should cost its sections, not the whole map.
   progress("building code graph");
   let graph: GraphSections | undefined;
@@ -312,6 +333,7 @@ export async function mapCodebase(
     reports,
     sections,
     truncated: truncatedFiles,
+    tree: renderedTree.text,
     ...(graph ? { graphMarkdown: graph.markdown } : {}),
   });
 

@@ -129,8 +129,8 @@ test("does nothing when the code did not change, and only re-analyzes what did",
   assert.equal(updated.status, "mapped");
   assert.equal(third.analyses().length, 1);
   assert.ok(third.analyses()[0]?.user.includes("b/b.ts"));
-  // Parts a and c, plus the overview: this fake model's report for b did not change.
-  assert.equal(updated.reusedAnswers, 3);
+  // Parts a and c, the directory tree and the overview: this fake model's report for b did not change.
+  assert.equal(updated.reusedAnswers, 4);
 
   const forced = fakeModel();
   await mapCodebase(root, config, { chat: forced.chat, force: true });

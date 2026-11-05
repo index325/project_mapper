@@ -18,8 +18,9 @@ flowchart LR
 1. **Scan**: lista os arquivos com `git ls-files` (ou percorre as pastas, fora do git) e descarta binários, dependências e arquivos gerados.
 2. **Divisão**: agrupa por pasta, respeitando o limite de tokens por requisição.
 3. **Análise**: envia cada parte ao modelo, com concorrência limitada.
-4. **Síntese**: gera visão geral, fluxos, convenções e guia de navegação.
-5. **Escrita**: monta o mapa e atualiza o resumo nas instruções do projeto.
+4. **Árvore**: descreve o propósito de cada arquivo e pasta. Os arquivos vêm da análise, e as pastas têm uma etapa própria no modelo.
+5. **Síntese**: gera visão geral, fluxos, convenções e guia de navegação.
+6. **Escrita**: monta o mapa e atualiza o resumo nas instruções do projeto.
 
 A orquestração é código comum, não o modelo. O resultado não depende da qualidade das chamadas de ferramenta do Qwen, e o conteúdo do repositório é analisado em chamadas sem ferramentas, então um texto malicioso num arquivo não consegue executar nada.
 
@@ -139,6 +140,7 @@ Se o projeto tem `CLAUDE.md` e não tem `AGENTS.md`, o resumo vai para o `CLAUDE
 ## Limites conhecidos
 
 - A contagem de tokens é uma estimativa conservadora (caracteres ÷ 3), porque o tokenizer real do modelo não é usado.
+- A árvore com o propósito de cada item lista arquivos e pastas até 1000 arquivos. Acima disso, mostra só as pastas, e os arquivos ficam no guia de módulos.
 - Arquivos maiores que uma requisição são analisados só no início, e arquivos acima de 1 MB são ignorados. Os dois casos aparecem em "Mapping Coverage" no mapa.
 - Só o `.gitignore` da raiz é respeitado fora de um repositório git. Dentro de um, valem todos.
 - Se o resumo do sistema não couber numa requisição mesmo após condensar os relatórios, ele é gerado com parte do material e o resultado traz um aviso.
